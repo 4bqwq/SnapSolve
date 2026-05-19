@@ -1,0 +1,16 @@
+[server]
+host = "127.0.0.1"
+port = 8765
+log_level = "info"
+
+[vlm_api]
+api_key = "replace-me"
+base_url = "https://vlm-api.example.com/v1"
+model = "MiMo-V2.5"
+timeout_seconds = 120
+
+[llm_api]
+api_key = "replace-me"
+base_url = "https://llm-api.example.com/v1"
+model = "MiMo-V2.5-Pro"
+timeout_seconds = 120

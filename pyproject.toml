@@ -1,0 +1,23 @@
+[project]
+name = "snapsolve"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.136.1",
+    "keyboard>=0.13.5",
+    "mss>=10.2.0",
+    "requests>=2.34.2",
+    "uvicorn[standard]>=0.47.0",
+]
+
+[project.scripts]
+snapsolve = "snapsolve.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["snapsolve"]
