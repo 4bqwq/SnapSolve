@@ -17,8 +17,11 @@ from .config import AppConfig
 from .model_client import OpenAICompatibleClient
 from .prompts import (
     EXTRACT_PROMPT,
+    FAST_PERSONALITY_USER_PROMPT,
     FAST_SYSTEM_PROMPT,
     FAST_USER_PROMPT,
+    PERSONALITY_CLASSIFIER_PROMPT,
+    PERSONALITY_TEST_SYSTEM_PROMPT,
     SLOW_SYSTEM_PROMPT,
     build_slow_user_prompt,
 )
@@ -103,7 +106,9 @@ class SnapSolveService:
         self.tabs: list[TabState] = []
         self.active_tab_id: str | None = None
         self.fast_history: list[dict[str, Any]] = []
+        self.fast_personality_history: list[dict[str, Any]] = []
         self.slow_history: list[dict[str, Any]] = []
+        self.slow_personality_history: list[dict[str, Any]] = []
         self._state_lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._hotkey_handle: Any = None
@@ -168,8 +173,9 @@ class SnapSolveService:
             await self._set_status(tab.id, "slow", "error", message)
             return tab.id
 
-        asyncio.create_task(self._run_fast_path(tab.id, shot.png))
-        asyncio.create_task(self._run_slow_path(tab.id, shot.png))
+        is_personality = await self._classify_capture(shot.png)
+        asyncio.create_task(self._run_fast_path(tab.id, shot.png, is_personality))
+        asyncio.create_task(self._run_slow_path(tab.id, shot.png, is_personality))
         return tab.id
 
     async def stream_events(self) -> AsyncIterator[str]:
@@ -210,13 +216,37 @@ class SnapSolveService:
         )
         return tab
 
-    async def _run_fast_path(self, tab_id: str, image_png: bytes) -> None:
+    async def _classify_capture(self, image_png: bytes) -> bool:
+        message = self._image_user_message(PERSONALITY_CLASSIFIER_PROMPT, image_png)
+        try:
+            label = await asyncio.to_thread(
+                self.client.complete_chat,
+                [message],
+                self.config.models.vlm,
+            )
+        except Exception as exc:
+            print(f"Personality classifier failed; defaulting to NORMAL: {exc}")
+            return False
+
+        normalized = label.strip().upper()
+        if normalized.startswith("PERSONALITY"):
+            return True
+        return "PERSONALITY" in normalized and "NORMAL" not in normalized
+
+    async def _run_fast_path(
+        self, tab_id: str, image_png: bytes, is_personality: bool
+    ) -> None:
         await self._set_status(tab_id, "fast", "running")
-        user_message = self._image_user_message(FAST_USER_PROMPT, image_png)
+        user_prompt = FAST_PERSONALITY_USER_PROMPT if is_personality else FAST_USER_PROMPT
+        system_prompt = (
+            PERSONALITY_TEST_SYSTEM_PROMPT if is_personality else FAST_SYSTEM_PROMPT
+        )
+        user_message = self._image_user_message(user_prompt, image_png)
         async with self._state_lock:
+            history = self.fast_personality_history if is_personality else self.fast_history
             messages = [
-                {"role": "system", "content": FAST_SYSTEM_PROMPT},
-                *self.fast_history,
+                {"role": "system", "content": system_prompt},
+                *history,
                 user_message,
             ]
 
@@ -230,18 +260,26 @@ class SnapSolveService:
                 content_separator=ANSWER_SEPARATOR,
             )
             async with self._state_lock:
-                self.fast_history.extend(
+                target_history = (
+                    self.fast_personality_history if is_personality else self.fast_history
+                )
+                target_history.extend(
                     [
                         user_message,
                         {"role": "assistant", "content": result.answer_for_history},
                     ]
                 )
-                self.fast_history = self._trim_history(self.fast_history)
+                if is_personality:
+                    self.fast_personality_history = self._trim_history(target_history)
+                else:
+                    self.fast_history = self._trim_history(target_history)
             await self._set_status(tab_id, "fast", "done")
         except Exception as exc:
             await self._set_status(tab_id, "fast", "error", f"\n快路失败：{exc}\n")
 
-    async def _run_slow_path(self, tab_id: str, image_png: bytes) -> None:
+    async def _run_slow_path(
+        self, tab_id: str, image_png: bytes, is_personality: bool
+    ) -> None:
         await self._set_status(tab_id, "slow", "waiting")
         await self._set_status(tab_id, "extract", "waiting")
         await asyncio.sleep(1.0)
@@ -272,10 +310,16 @@ class SnapSolveService:
             "role": "user",
             "content": build_slow_user_prompt(extracted),
         }
+        system_prompt = (
+            PERSONALITY_TEST_SYSTEM_PROMPT if is_personality else SLOW_SYSTEM_PROMPT
+        )
         async with self._state_lock:
+            history = (
+                self.slow_personality_history if is_personality else self.slow_history
+            )
             messages = [
-                {"role": "system", "content": SLOW_SYSTEM_PROMPT},
-                *self.slow_history,
+                {"role": "system", "content": system_prompt},
+                *history,
                 user_message,
             ]
 
@@ -289,13 +333,21 @@ class SnapSolveService:
                 content_separator=ANSWER_SEPARATOR,
             )
             async with self._state_lock:
-                self.slow_history.extend(
+                target_history = (
+                    self.slow_personality_history
+                    if is_personality
+                    else self.slow_history
+                )
+                target_history.extend(
                     [
                         user_message,
                         {"role": "assistant", "content": result.answer_for_history},
                     ]
                 )
-                self.slow_history = self._trim_history(self.slow_history)
+                if is_personality:
+                    self.slow_personality_history = self._trim_history(target_history)
+                else:
+                    self.slow_history = self._trim_history(target_history)
             await self._set_status(tab_id, "slow", "done")
         except Exception as exc:
             await self._set_status(tab_id, "slow", "error", f"\n慢路失败：{exc}\n")
