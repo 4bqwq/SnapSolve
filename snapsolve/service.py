@@ -139,12 +139,21 @@ class SnapSolveService:
         loop = self._loop
         if loop is None:
             return
-        now = time.monotonic()
-        with self._trigger_lock:
-            if now - self._last_trigger_at < self.config.hotkey.debounce_seconds:
-                return
-            self._last_trigger_at = now
+        if not self._claim_trigger():
+            return
         loop.call_soon_threadsafe(lambda: asyncio.create_task(self.handle_capture()))
+
+    async def request_capture(self) -> dict[str, Any]:
+        if not self._claim_trigger():
+            return {
+                "accepted": False,
+                "tab_id": self.active_tab_id,
+            }
+        tab_id = await self.handle_capture()
+        return {
+            "accepted": True,
+            "tab_id": tab_id,
+        }
 
     async def handle_capture(self) -> str:
         tab = await self._create_tab()
@@ -391,6 +400,14 @@ class SnapSolveService:
 
     def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return history[-self.config.context.max_history_messages :]
+
+    def _claim_trigger(self) -> bool:
+        now = time.monotonic()
+        with self._trigger_lock:
+            if now - self._last_trigger_at < self.config.hotkey.debounce_seconds:
+                return False
+            self._last_trigger_at = now
+        return True
 
     def _find_tab(self, tab_id: str) -> TabState | None:
         return next((tab for tab in self.tabs if tab.id == tab_id), None)

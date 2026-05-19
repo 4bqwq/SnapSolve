@@ -44,9 +44,8 @@ def create_app(config: AppConfig) -> FastAPI:
         )
 
     @app.post("/capture")
-    async def capture() -> dict[str, str]:
-        tab_id = await service.handle_capture()
-        return {"tab_id": tab_id}
+    async def capture() -> dict[str, object]:
+        return await service.request_capture()
 
     @app.get("/health")
     async def health() -> dict[str, str]:

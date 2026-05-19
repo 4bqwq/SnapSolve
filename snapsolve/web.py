@@ -296,7 +296,8 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const state = {
       tabs: [],
-      activeTabId: null
+      activeTabId: null,
+      captureInFlight: false
     };
 
     const el = {
@@ -409,7 +410,13 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowLeft") {
+      if (event.altKey && (event.code === "Space" || event.key === " ")) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          triggerCaptureFromPage();
+        }
+      } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         moveTab(-1);
       } else if (event.key === "ArrowRight") {
@@ -417,6 +424,36 @@ INDEX_HTML = r"""<!doctype html>
         moveTab(1);
       }
     });
+
+    async function triggerCaptureFromPage() {
+      if (state.captureInFlight) {
+        return;
+      }
+      state.captureInFlight = true;
+      const previousStatus = el.connection.textContent;
+      el.connection.textContent = "触发中";
+      try {
+        const response = await fetch("/capture", {
+          method: "POST",
+          headers: { "Accept": "application/json" }
+        });
+        if (!response.ok) {
+          el.connection.textContent = "触发失败";
+          return;
+        }
+        const payload = await response.json();
+        el.connection.textContent = payload.accepted === false ? "已忽略" : "已触发";
+      } catch {
+        el.connection.textContent = "触发失败";
+      } finally {
+        state.captureInFlight = false;
+        setTimeout(() => {
+          if (el.connection.textContent === "已触发" || el.connection.textContent === "已忽略") {
+            el.connection.textContent = previousStatus || "已连接";
+          }
+        }, 1200);
+      }
+    }
 
     function upsertTab(tab) {
       const index = state.tabs.findIndex((existing) => existing.id === tab.id);
