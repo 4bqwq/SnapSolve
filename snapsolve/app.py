@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from .config import AppConfig
+from .network import build_access_info
 from .service import SnapSolveService
 from .web import INDEX_HTML
 
@@ -50,5 +51,16 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/info")
+    async def info() -> dict[str, object]:
+        access = build_access_info(config.server)
+        return {
+            "listen_host": access.listen_host,
+            "port": access.port,
+            "local_url": access.local_url,
+            "lan_urls": access.lan_urls,
+            "lan_enabled": access.lan_enabled,
+        }
 
     return app

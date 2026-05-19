@@ -62,11 +62,22 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .connection {
+      flex: 0 0 auto;
       color: var(--muted);
       font-size: 12px;
-      margin-left: auto;
       min-width: 56px;
       text-align: right;
+    }
+
+    .access-url {
+      color: var(--muted);
+      flex: 1 1 auto;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 12px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .tabs {
@@ -252,6 +263,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="app" id="app" tabindex="0">
     <header class="topbar">
       <div class="brand">SnapSolve</div>
+      <div class="access-url" id="accessUrl"></div>
       <div class="connection" id="connection">连接中</div>
     </header>
     <nav class="tabs" id="tabs" aria-label="题目标签">
@@ -296,7 +308,8 @@ INDEX_HTML = r"""<!doctype html>
       extractOutput: document.getElementById("extractOutput"),
       fastStatus: document.getElementById("fastStatus"),
       slowStatus: document.getElementById("slowStatus"),
-      extractStatus: document.getElementById("extractStatus")
+      extractStatus: document.getElementById("extractStatus"),
+      accessUrl: document.getElementById("accessUrl")
     };
 
     function activeTab() {
@@ -414,6 +427,23 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
+    async function loadAccessInfo() {
+      try {
+        const response = await fetch("/info", { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+        const info = await response.json();
+        if (info.lan_urls && info.lan_urls.length > 0) {
+          el.accessUrl.textContent = "局域网 " + info.lan_urls.join("  ");
+        } else {
+          el.accessUrl.textContent = "本机 " + info.local_url;
+        }
+      } catch {
+        el.accessUrl.textContent = "";
+      }
+    }
+
     const events = new EventSource("/events");
 
     events.addEventListener("open", () => {
@@ -467,6 +497,7 @@ INDEX_HTML = r"""<!doctype html>
     });
 
     el.app.focus({ preventScroll: true });
+    loadAccessInfo();
   </script>
 </body>
 </html>
