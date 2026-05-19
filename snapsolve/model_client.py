@@ -26,10 +26,10 @@ class OpenAICompatibleClient:
                 timeout=(15, config.timeout_seconds),
             ) as response:
                 self._raise_for_status(response)
-                for raw_line in response.iter_lines(decode_unicode=True):
+                for raw_line in response.iter_lines(decode_unicode=False):
                     if not raw_line:
                         continue
-                    line = raw_line.strip()
+                    line = raw_line.decode("utf-8").strip()
                     if line.startswith(":"):
                         continue
                     if line.startswith("data:"):
@@ -57,7 +57,7 @@ class OpenAICompatibleClient:
         except requests.RequestException as exc:
             raise ModelClientError(f"API request failed: {exc}") from exc
 
-        data = self._loads_json(response.text)
+        data = self._loads_json(self._response_text(response))
         choices = data.get("choices") or []
         if not choices:
             raise ModelClientError("API response did not contain choices")
@@ -105,10 +105,13 @@ class OpenAICompatibleClient:
     def _raise_for_status(self, response: requests.Response) -> None:
         if response.ok:
             return
-        body = response.text[:1000]
+        body = self._response_text(response)[:1000]
         raise ModelClientError(
             f"API returned HTTP {response.status_code}: {body or response.reason}"
         )
+
+    def _response_text(self, response: requests.Response) -> str:
+        return response.content.decode("utf-8", errors="replace")
 
     def _loads_json(self, text: str) -> dict[str, Any]:
         try:
