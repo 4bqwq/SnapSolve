@@ -123,6 +123,10 @@ INDEX_HTML = r"""<!doctype html>
       min-height: 0;
     }
 
+    .slow-pane {
+      grid-template-rows: 42px 160px 1fr;
+    }
+
     .pane + .pane {
       border-left: 1px solid var(--line);
     }
@@ -160,6 +164,49 @@ INDEX_HTML = r"""<!doctype html>
       white-space: nowrap;
     }
 
+    .extract-panel {
+      background: #f4f6f5;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-rows: 32px 1fr;
+      min-height: 0;
+    }
+
+    .extract-head {
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 10px;
+      padding: 0 16px;
+    }
+
+    .extract-title {
+      color: #40514a;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .extract-status {
+      color: var(--muted);
+      font-size: 12px;
+      margin-left: auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .extract-output {
+      color: #2f3935;
+      font: 12px/1.55 Consolas, "SFMono-Regular", "Microsoft YaHei UI", monospace;
+      margin: 0;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px 14px 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     .output {
       color: var(--text);
       font: 14px/1.65 Consolas, "SFMono-Regular", "Microsoft YaHei UI", monospace;
@@ -190,6 +237,10 @@ INDEX_HTML = r"""<!doctype html>
         border-top: 1px solid var(--line);
       }
 
+      .slow-pane {
+        grid-template-rows: 42px 118px minmax(0, 1fr);
+      }
+
       .output {
         font-size: 13px;
         padding: 14px 16px 22px;
@@ -214,10 +265,17 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <pre class="output placeholder" id="fastOutput"></pre>
       </section>
-      <section class="pane" aria-label="慢路答案">
+      <section class="pane slow-pane" aria-label="慢路答案">
         <div class="pane-head">
           <span class="lane-title slow">慢路</span>
           <span class="lane-status" id="slowStatus"></span>
+        </div>
+        <div class="extract-panel" aria-label="题目提取">
+          <div class="extract-head">
+            <span class="extract-title">题目提取</span>
+            <span class="extract-status" id="extractStatus"></span>
+          </div>
+          <pre class="extract-output placeholder" id="extractOutput"></pre>
         </div>
         <pre class="output placeholder" id="slowOutput"></pre>
       </section>
@@ -235,8 +293,10 @@ INDEX_HTML = r"""<!doctype html>
       connection: document.getElementById("connection"),
       fastOutput: document.getElementById("fastOutput"),
       slowOutput: document.getElementById("slowOutput"),
+      extractOutput: document.getElementById("extractOutput"),
       fastStatus: document.getElementById("fastStatus"),
-      slowStatus: document.getElementById("slowStatus")
+      slowStatus: document.getElementById("slowStatus"),
+      extractStatus: document.getElementById("extractStatus")
     };
 
     function activeTab() {
@@ -249,6 +309,7 @@ INDEX_HTML = r"""<!doctype html>
         waiting: "等待",
         running: "生成中",
         extracting: "提取中",
+        extract: "识别中",
         thinking: "推理中",
         done: "完成",
         error: "错误"
@@ -281,19 +342,25 @@ INDEX_HTML = r"""<!doctype html>
       if (!tab) {
         el.fastOutput.textContent = "";
         el.slowOutput.textContent = "";
+        el.extractOutput.textContent = "";
         el.fastOutput.classList.add("placeholder");
         el.slowOutput.classList.add("placeholder");
+        el.extractOutput.classList.add("placeholder");
         el.fastStatus.textContent = "";
         el.slowStatus.textContent = "";
+        el.extractStatus.textContent = "";
         return;
       }
 
       el.fastOutput.textContent = tab.fast || "";
       el.slowOutput.textContent = tab.slow || "";
+      el.extractOutput.textContent = tab.extract || "";
       el.fastOutput.classList.toggle("placeholder", !tab.fast);
       el.slowOutput.classList.toggle("placeholder", !tab.slow);
+      el.extractOutput.classList.toggle("placeholder", !tab.extract);
       el.fastStatus.textContent = statusText(tab.statuses.fast);
       el.slowStatus.textContent = statusText(tab.statuses.slow);
+      el.extractStatus.textContent = statusText(tab.statuses.extract);
       scrollToBottom();
     }
 
@@ -307,6 +374,7 @@ INDEX_HTML = r"""<!doctype html>
       requestAnimationFrame(() => {
         el.fastOutput.scrollTop = el.fastOutput.scrollHeight;
         el.slowOutput.scrollTop = el.slowOutput.scrollHeight;
+        el.extractOutput.scrollTop = el.extractOutput.scrollHeight;
       });
     }
 

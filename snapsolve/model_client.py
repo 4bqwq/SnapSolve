@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 import json
-from typing import Any
+from typing import Any, Literal
 
 import requests
 
 from .config import ModelConfig
+
+
+TokenKind = Literal["reasoning", "content"]
+
+
+@dataclass(frozen=True)
+class ChatToken:
+    kind: TokenKind
+    text: str
 
 
 class ModelClientError(RuntimeError):
@@ -15,6 +25,12 @@ class ModelClientError(RuntimeError):
 
 class OpenAICompatibleClient:
     def iter_chat(self, messages: list[dict[str, Any]], config: ModelConfig) -> Iterator[str]:
+        for token in self.iter_chat_events(messages, config):
+            yield token.text
+
+    def iter_chat_events(
+        self, messages: list[dict[str, Any]], config: ModelConfig
+    ) -> Iterator[ChatToken]:
         payload = self._payload(messages, config, stream=True)
 
         try:
@@ -122,10 +138,13 @@ class OpenAICompatibleClient:
             raise ModelClientError("API returned a non-object JSON payload")
         return value
 
-    def _tokens_from_chunk(self, chunk: dict[str, Any]) -> Iterator[str]:
+    def _tokens_from_chunk(self, chunk: dict[str, Any]) -> Iterator[ChatToken]:
         for choice in chunk.get("choices") or []:
             delta = choice.get("delta") or {}
-            for key in ("reasoning_content", "reasoning", "content"):
+            for key in ("reasoning_content", "reasoning"):
                 token = delta.get(key)
                 if token:
-                    yield str(token)
+                    yield ChatToken(kind="reasoning", text=str(token))
+            token = delta.get("content")
+            if token:
+                yield ChatToken(kind="content", text=str(token))

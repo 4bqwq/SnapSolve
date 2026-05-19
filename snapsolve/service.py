@@ -26,6 +26,20 @@ from .screenshot import Screenshotter
 
 
 Lane = str
+ANSWER_REASONING_TITLE = "【思考过程】\n"
+ANSWER_SEPARATOR = "\n\n--- 正式回答 ---\n\n"
+EXTRACT_REASONING_TITLE = "【识别过程】\n"
+EXTRACT_SEPARATOR = "\n\n--- 提取结果 ---\n\n"
+
+
+@dataclass
+class StreamResult:
+    content: str
+    reasoning: str
+
+    @property
+    def answer_for_history(self) -> str:
+        return self.content or self.reasoning
 
 
 @dataclass
@@ -35,8 +49,9 @@ class TabState:
     created_at: str
     fast: str = ""
     slow: str = ""
+    extract: str = ""
     statuses: dict[str, str] = field(
-        default_factory=lambda: {"fast": "idle", "slow": "idle"}
+        default_factory=lambda: {"fast": "idle", "slow": "idle", "extract": "idle"}
     )
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +61,7 @@ class TabState:
             "created_at": self.created_at,
             "fast": self.fast,
             "slow": self.slow,
+            "extract": self.extract,
             "statuses": dict(self.statuses),
         }
 
@@ -196,15 +212,20 @@ class SnapSolveService:
             ]
 
         try:
-            answer = await self._stream_to_lane(
+            result = await self._stream_to_lane(
                 tab_id,
                 "fast",
                 messages,
                 self.config.models.vlm,
+                reasoning_title=ANSWER_REASONING_TITLE,
+                content_separator=ANSWER_SEPARATOR,
             )
             async with self._state_lock:
                 self.fast_history.extend(
-                    [user_message, {"role": "assistant", "content": answer}]
+                    [
+                        user_message,
+                        {"role": "assistant", "content": result.answer_for_history},
+                    ]
                 )
                 self.fast_history = self._trim_history(self.fast_history)
             await self._set_status(tab_id, "fast", "done")
@@ -213,19 +234,27 @@ class SnapSolveService:
 
     async def _run_slow_path(self, tab_id: str, image_png: bytes) -> None:
         await self._set_status(tab_id, "slow", "waiting")
+        await self._set_status(tab_id, "extract", "waiting")
         await asyncio.sleep(1.0)
         await self._set_status(tab_id, "slow", "extracting")
+        await self._set_status(tab_id, "extract", "extracting")
 
         extract_message = self._image_user_message(EXTRACT_PROMPT, image_png)
         try:
-            extracted = await asyncio.to_thread(
-                self.client.complete_chat,
+            extracted_result = await self._stream_to_lane(
+                tab_id,
+                "extract",
                 [extract_message],
                 self.config.models.vlm,
+                reasoning_title=EXTRACT_REASONING_TITLE,
+                content_separator=EXTRACT_SEPARATOR,
             )
+            extracted = extracted_result.answer_for_history
             if not extracted.strip():
                 raise RuntimeError("VLM extraction returned empty text")
+            await self._set_status(tab_id, "extract", "done")
         except Exception as exc:
+            await self._set_status(tab_id, "extract", "error", f"\n题目提取失败：{exc}\n")
             await self._set_status(tab_id, "slow", "error", f"\n题目提取失败：{exc}\n")
             return
 
@@ -242,15 +271,20 @@ class SnapSolveService:
             ]
 
         try:
-            answer = await self._stream_to_lane(
+            result = await self._stream_to_lane(
                 tab_id,
                 "slow",
                 messages,
                 self.config.models.llm,
+                reasoning_title=ANSWER_REASONING_TITLE,
+                content_separator=ANSWER_SEPARATOR,
             )
             async with self._state_lock:
                 self.slow_history.extend(
-                    [user_message, {"role": "assistant", "content": answer}]
+                    [
+                        user_message,
+                        {"role": "assistant", "content": result.answer_for_history},
+                    ]
                 )
                 self.slow_history = self._trim_history(self.slow_history)
             await self._set_status(tab_id, "slow", "done")
@@ -263,13 +297,16 @@ class SnapSolveService:
         lane: Lane,
         messages: list[dict[str, Any]],
         model_config: Any,
-    ) -> str:
-        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        *,
+        reasoning_title: str,
+        content_separator: str,
+    ) -> StreamResult:
+        queue: asyncio.Queue[Any | Exception | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
         def worker() -> None:
             try:
-                for token in self.client.iter_chat(messages, model_config):
+                for token in self.client.iter_chat_events(messages, model_config):
                     loop.call_soon_threadsafe(queue.put_nowait, token)
             except Exception as exc:
                 loop.call_soon_threadsafe(queue.put_nowait, exc)
@@ -278,16 +315,36 @@ class SnapSolveService:
 
         threading.Thread(target=worker, daemon=True).start()
 
-        parts: list[str] = []
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        saw_content = False
+        saw_reasoning = False
         while True:
             item = await queue.get()
             if item is None:
                 break
             if isinstance(item, Exception):
                 raise item
-            parts.append(item)
-            await self._append_token(tab_id, lane, item)
-        return "".join(parts)
+
+            if item.kind == "reasoning":
+                if not saw_reasoning:
+                    await self._append_token(tab_id, lane, reasoning_title)
+                    saw_reasoning = True
+                reasoning_parts.append(item.text)
+                await self._append_token(tab_id, lane, item.text)
+                continue
+
+            if item.kind == "content":
+                if saw_reasoning and not saw_content:
+                    await self._append_token(tab_id, lane, content_separator)
+                saw_content = True
+                content_parts.append(item.text)
+                await self._append_token(tab_id, lane, item.text)
+
+        return StreamResult(
+            content="".join(content_parts),
+            reasoning="".join(reasoning_parts),
+        )
 
     async def _append_token(self, tab_id: str, lane: Lane, text: str) -> None:
         async with self._state_lock:
