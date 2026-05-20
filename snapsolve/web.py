@@ -61,6 +61,38 @@ INDEX_HTML = r"""<!doctype html>
       white-space: nowrap;
     }
 
+    .capture-button {
+      align-items: center;
+      appearance: none;
+      background: #1f2522;
+      border: 1px solid #1f2522;
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      flex: 0 0 auto;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 650;
+      height: 28px;
+      justify-content: center;
+      line-height: 1;
+      min-width: 48px;
+      padding: 0 10px;
+    }
+
+    .capture-button:disabled {
+      background: #8c9690;
+      border-color: #8c9690;
+      cursor: default;
+    }
+
+    .hotkey-label {
+      color: var(--muted);
+      flex: 0 0 auto;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
     .connection {
       flex: 0 0 auto;
       color: var(--muted);
@@ -263,6 +295,8 @@ INDEX_HTML = r"""<!doctype html>
   <div class="app" id="app" tabindex="0">
     <header class="topbar">
       <div class="brand">SnapSolve</div>
+      <button class="capture-button" id="captureButton" type="button" title="触发截图" aria-label="触发截图">截图</button>
+      <div class="hotkey-label" id="hotkeyLabel"></div>
       <div class="access-url" id="accessUrl"></div>
       <div class="connection" id="connection">连接中</div>
     </header>
@@ -297,7 +331,8 @@ INDEX_HTML = r"""<!doctype html>
     const state = {
       tabs: [],
       activeTabId: null,
-      captureInFlight: false
+      captureInFlight: false,
+      hotkey: null
     };
 
     const el = {
@@ -310,7 +345,9 @@ INDEX_HTML = r"""<!doctype html>
       fastStatus: document.getElementById("fastStatus"),
       slowStatus: document.getElementById("slowStatus"),
       extractStatus: document.getElementById("extractStatus"),
-      accessUrl: document.getElementById("accessUrl")
+      accessUrl: document.getElementById("accessUrl"),
+      captureButton: document.getElementById("captureButton"),
+      hotkeyLabel: document.getElementById("hotkeyLabel")
     };
 
     function activeTab() {
@@ -410,7 +447,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     document.addEventListener("keydown", (event) => {
-      if (event.altKey && (event.code === "Space" || event.key === " ")) {
+      if (eventMatchesShortcut(event, state.hotkey)) {
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) {
@@ -425,11 +462,88 @@ INDEX_HTML = r"""<!doctype html>
       }
     });
 
+    function parseShortcut(sequence) {
+      if (!sequence) {
+        return null;
+      }
+      const parts = sequence.split("+").map((part) => part.trim()).filter(Boolean);
+      if (parts.length === 0) {
+        return null;
+      }
+      const shortcut = {
+        alt: false,
+        ctrl: false,
+        shift: false,
+        meta: false,
+        key: ""
+      };
+      for (const part of parts) {
+        const token = part.toLowerCase();
+        if (token === "alt" || token === "option") {
+          shortcut.alt = true;
+        } else if (token === "ctrl" || token === "control") {
+          shortcut.ctrl = true;
+        } else if (token === "shift") {
+          shortcut.shift = true;
+        } else if (token === "meta" || token === "cmd" || token === "command" || token === "win" || token === "windows") {
+          shortcut.meta = true;
+        } else {
+          shortcut.key = token;
+        }
+      }
+      return shortcut.key ? shortcut : null;
+    }
+
+    function eventMatchesShortcut(event, shortcut) {
+      if (!shortcut) {
+        return false;
+      }
+      if (event.altKey !== shortcut.alt) {
+        return false;
+      }
+      if (event.ctrlKey !== shortcut.ctrl) {
+        return false;
+      }
+      if (event.shiftKey !== shortcut.shift) {
+        return false;
+      }
+      if (event.metaKey !== shortcut.meta) {
+        return false;
+      }
+      return eventMatchesKey(event, shortcut.key);
+    }
+
+    function eventMatchesKey(event, key) {
+      const eventKey = (event.key || "").toLowerCase();
+      const code = event.code || "";
+      if (key === "space") {
+        return code === "Space" || event.key === " ";
+      }
+      if (key.length === 1) {
+        return eventKey === key || code === "Key" + key.toUpperCase();
+      }
+      const aliases = {
+        esc: "escape",
+        return: "enter",
+        del: "delete",
+        left: "arrowleft",
+        right: "arrowright",
+        up: "arrowup",
+        down: "arrowdown"
+      };
+      return eventKey === (aliases[key] || key);
+    }
+
+    el.captureButton.addEventListener("click", () => {
+      triggerCaptureFromPage();
+    });
+
     async function triggerCaptureFromPage() {
       if (state.captureInFlight) {
         return;
       }
       state.captureInFlight = true;
+      el.captureButton.disabled = true;
       const previousStatus = el.connection.textContent;
       el.connection.textContent = "触发中";
       try {
@@ -447,8 +561,9 @@ INDEX_HTML = r"""<!doctype html>
         el.connection.textContent = "触发失败";
       } finally {
         state.captureInFlight = false;
+        el.captureButton.disabled = false;
         setTimeout(() => {
-          if (el.connection.textContent === "已触发" || el.connection.textContent === "已忽略") {
+          if (["已触发", "已忽略", "触发失败"].includes(el.connection.textContent)) {
             el.connection.textContent = previousStatus || "已连接";
           }
         }, 1200);
@@ -476,6 +591,10 @@ INDEX_HTML = r"""<!doctype html>
         } else {
           el.accessUrl.textContent = "本机 " + info.local_url;
         }
+        const sequence = info.hotkey && info.hotkey.sequence;
+        state.hotkey = parseShortcut(sequence);
+        el.hotkeyLabel.textContent = sequence ? "快捷键 " + sequence : "";
+        el.captureButton.title = sequence ? "触发截图 (" + sequence + ")" : "触发截图";
       } catch {
         el.accessUrl.textContent = "";
       }

@@ -36,7 +36,7 @@ class ServerConfig:
 @dataclass(frozen=True)
 class HotkeyConfig:
     enabled: bool = True
-    sequence: str = "alt+space"
+    sequence: str = ""
     debounce_seconds: float = 0.8
 
 
@@ -101,7 +101,7 @@ def load_config(path: str | Path = "config.toml") -> AppConfig:
         ),
         hotkey=HotkeyConfig(
             enabled=bool(hotkey.get("enabled", True)),
-            sequence=str(hotkey.get("sequence", "alt+space")),
+            sequence=_required_str(hotkey, "sequence", "[hotkey].sequence"),
             debounce_seconds=float(hotkey.get("debounce_seconds", 0.8)),
         ),
         screenshot=ScreenshotConfig(
@@ -146,6 +146,13 @@ def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _required_str(table: dict[str, Any], key: str, label: str) -> str:
+    value = table.get(key)
+    if value is None or str(value).strip() == "":
+        raise ConfigError(f"Missing required config: {label}")
+    return str(value).strip()
 
 
 def _table(data: dict[str, Any], key: str) -> dict[str, Any]:

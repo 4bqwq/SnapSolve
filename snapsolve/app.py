@@ -60,6 +60,10 @@ def create_app(config: AppConfig) -> FastAPI:
             "local_url": access.local_url,
             "lan_urls": access.lan_urls,
             "lan_enabled": access.lan_enabled,
+            "hotkey": {
+                "enabled": config.hotkey.enabled,
+                "sequence": config.hotkey.sequence,
+            },
         }
 
     return app
